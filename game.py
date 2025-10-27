@@ -2,6 +2,8 @@ from typing import Set, Tuple, List, Dict, Optional
 from items import ItemType
 from enemies import Enemy
 from cell import Cell
+from aStar import AStarNode, heapq
+from helpers import *
 
 
 class RingDestroyerGame:
@@ -20,19 +22,150 @@ class RingDestroyerGame:
         self.map_no_ring: Dict[Tuple[int, int], Cell] = {}
         self.map_with_ring: Dict[Tuple[int, int], Cell] = {}
         
-    def initialize_map(self):
-        # Инициализация карт
-        pass
+    def initialize_maps(self):
+        """Инициализируем обе карты (с кольцом и без)"""
+        self.map_no_ring: Dict[Tuple[int, int], Cell] = {}
+        self.map_with_ring: Dict[Tuple[int, int], Cell] = {}
         
-    def update_perception(self, perception_data: List[Tuple[int, int, ItemType]]):
-        # Обновление информации на картах на основе перцепции
-        pass
+        for x in range(self.grid_size):
+            for y in range(self.grid_size):
+                self.map_no_ring[(x, y)] = Cell(x, y)
+                self.map_with_ring[(x, y)] = Cell(x, y)
+        
+        # Начальная позиция безопасна и посещена без кольца
+        start_cell_no_ring = self.map_no_ring[(0, 0)]
+        start_cell_no_ring.is_safe_no_ring = True
+        start_cell_no_ring.visited_no_ring = True
+        
+        start_cell_with_ring = self.map_with_ring[(0, 0)]
+        start_cell_with_ring.is_safe_with_ring = None  # Пока неизвестно с кольцом
+        
+    def update_from_perception(self, perception_data: List[Tuple[int, int, ItemType]]):
+        """Обновляем карты на основе полученных данных перцепции"""
+        current_map = self.map_with_ring if self.ring_on else self.map_no_ring
+        # Сначала помечаем все воспринятые клетки как безопасные
+        # (если они не содержат врагов, о которых узнаем ниже)
+        for x, y, item_type in perception_data:
+            cell = current_map.get((x, y))
+            if cell:
+                cell.update_from_perception(item_type, self.ring_on, self.has_mithril)
+                
+                # Если обнаружили врага - добавляем в known_enemies
+                if item_type in [ItemType.O, ItemType.U, ItemType.N, ItemType.W]:
+                    enemy = Enemy(item_type, x, y)
+                    if not any(e.position == (x, y) for e in self.known_enemies):
+                        self.known_enemies.append(enemy)
+                
+                # Если нашли Голлума - запоминаем позицию
+                elif item_type == ItemType.G:
+                    self.gollum_pos = (x, y)
+                
+                # Если нашли кольчугу - активируем
+                elif item_type == ItemType.C:
+                    self.has_mithril = True
+
+    def get_current_map(self) -> Dict[Tuple[int, int], Cell]:
+        """Получаем текущую карту в зависимости от состояния кольца"""
+        return self.map_with_ring if self.ring_on else self.map_no_ring
+
+    def is_fully_safe_cell(self, x: int, y: int) -> bool:
+        """Проверяем, полностью ли безопасна клетка (и с кольцом, и без)"""
+        cell_no_ring = self.map_no_ring.get((x, y))
+        cell_with_ring = self.map_with_ring.get((x, y))
+        
+        return (cell_no_ring and cell_no_ring.is_safe_no_ring and
+                cell_with_ring and cell_with_ring.is_safe_with_ring)
         
     def a_star_search(self, start: Tuple[int, int], goal: Tuple[int, int], 
-                     use_ring: bool) -> Optional[List[Tuple[int, int]]]:
-        # Реализация A* с эвристикой Манхэттенского расстояния
-        pass
+                     start_ring: bool) -> Optional[List[Tuple[int, int, bool]]]:
+        """
+        Поиск пути от start до goal с начальным состоянием кольца start_ring
+        Возвращает список (x, y, ring_state) или None если путь не найден
+        """
+        open_set = []
+        closed_set = set()
         
+        # Начальный узел
+        start_node = AStarNode(start[0], start[1], start_ring, 0, 
+                              manhattan_distance(start, goal))
+        heapq.heappush(open_set, start_node)
+        
+        while open_set:
+            current = heapq.heappop(open_set)
+            
+            # Проверяем, достигли ли цели
+            if (current.x, current.y) == goal:
+                return self._reconstruct_path(current)
+                
+            closed_set.add((current.x, current.y, current.ring_on))
+            
+            # Генерируем соседние узлы
+            neighbors = self._get_neighbors(current)
+            
+            for neighbor in neighbors:
+                if (neighbor.x, neighbor.y, neighbor.ring_on) in closed_set:
+                    continue
+                    
+                # Проверяем, есть ли узел в open_set с меньшей стоимостью
+                found_better = False
+                for node in open_set:
+                    if (node.x, node.y, node.ring_on) == (neighbor.x, neighbor.y, neighbor.ring_on):
+                        if node.g <= neighbor.g:
+                            found_better = True
+                            break
+                        # Заменяем узел на более дешевый
+                        open_set.remove(node)
+                        heapq.heapify(open_set)
+                        break
+                
+                if not found_better:
+                    heapq.heappush(open_set, neighbor)
+                    
+        return None  # Путь не найден
+        
+    def _reconstruct_path(self, node: AStarNode) -> List[Tuple[int, int, bool]]:
+        """Восстанавливаем путь от конечного узла до начала"""
+        path = []
+        current = node
+        while current:
+            path.append((current.x, current.y, current.ring_on))
+            current = current.parent
+        return path[::-1]  # Разворачиваем путь (от начала к концу)
+    
+    def _get_neighbors(self, node: AStarNode) -> List[AStarNode]:
+        """Генерируем все возможные соседние узлы"""
+        neighbors = []
+        x, y, ring_on = node.x, node.y, node.ring_on
+        
+        # 1. Движение в соседние клетки (ортогонально)
+        for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+            nx, ny = x + dx, y + dy
+            
+            # Проверяем границы карты
+            if not (0 <= nx < self.grid_size and 0 <= ny < self.grid_size):
+                continue
+                
+            # Проверяем безопасность клетки в текущем состоянии кольца
+            current_map = self.map_with_ring if ring_on else self.map_no_ring
+            cell = current_map.get((nx, ny))
+            
+            if cell and self._is_cell_safe(cell, ring_on):
+                # Клетка безопасна - можем двигаться
+                g_new = node.g + 1  # Стоимость движения = 1
+                h_new = manhattan_distance((nx, ny), self._get_current_goal())
+                neighbor = AStarNode(nx, ny, ring_on, g_new, h_new, node)
+                neighbors.append(neighbor)
+        
+        # 2. Переключение кольца (только в полностью безопасных клетках)
+        if self.is_fully_safe_cell(x, y):
+            new_ring_state = not ring_on
+            g_new = node.g  # Переключение кольца не имеет стоимости движения
+            h_new = manhattan_distance((x, y), self._get_current_goal())
+            switch_node = AStarNode(x, y, new_ring_state, g_new, h_new, node)
+            neighbors.append(switch_node)
+            
+        return neighbors
+    
     def explore_optimal_path(self):
         # Основная логика исследования и движения
         # Будем переключать кольцо в безопасных клетках для изучения местности
