@@ -163,8 +163,133 @@ class RingDestroyerGame:
             h_new = manhattan_distance((x, y), self._get_current_goal())
             switch_node = AStarNode(x, y, new_ring_state, g_new, h_new, node)
             neighbors.append(switch_node)
-            
+        
         return neighbors
+    
+    def _is_cell_safe(self, cell: Cell, ring_on: bool) -> bool:
+        """Проверяем, безопасна ли клетка в данном состоянии кольца"""
+        if ring_on:
+            return cell.is_safe_with_ring is True
+        else:
+            return cell.is_safe_no_ring is True
+            
+    def _get_current_goal(self) -> Tuple[int, int]:
+        """Получаем текущую цель (Голлум или Гора Огненная)"""
+        if self.found_gollum and self.doom_pos:
+            return self.doom_pos
+        else:
+            return self.gollum_pos
+        
+    def execute_astar_move(self) -> Optional[str]:
+        """
+        Выполняет один ход на основе A* поиска
+        Возвращает команду для интерактора или None если путь завершен
+        """
+        if not self.found_gollum:
+            goal = self.gollum_pos
+        else:
+            goal = self.doom_pos
+            
+        if goal is None:
+            return None
+            
+        # Ищем путь до текущей цели
+        path = self.a_star_search(self.current_pos, goal, self.ring_on)
+        
+        if not path:
+            # Путь не найден - карта нерешаема
+            return "e -1"
+            
+        if len(path) == 1:
+            # Мы уже в целевой клетке
+            if not self.found_gollum and (self.current_pos == self.gollum_pos):
+                self.found_gollum = True
+                # Получаем позицию Горы Огненной от интерактора
+                return None  # Нужно обработать специальный случай
+            else:
+                return "e 0"  # Завершаем выполнение
+                
+        # Берем следующий шаг из пути
+        next_x, next_y, next_ring_state = path[1]
+        
+        # Проверяем, нужно ли переключить кольцо
+        if next_ring_state != self.ring_on:
+            if next_ring_state:
+                return "r"  # Надеть кольцо
+            else:
+                return "rr"  # Снять кольцо
+        else:
+            # Двигаемся в следующую клетку
+            return f"m {next_x} {next_y}"
+        
+    def execute_astar_move(self) -> Optional[str]:
+        """
+        Выполняет один ход на основе A* поиска
+        Возвращает команду для интерактора или None если путь завершен
+        """
+        if not self.found_gollum:
+            goal = self.gollum_pos
+        else:
+            goal = self.doom_pos
+            
+        if goal is None:
+            return None
+            
+        # Ищем путь до текущей цели
+        path = self.a_star_search(self.current_pos, goal, self.ring_on)
+        
+        if not path:
+            # Путь не найден - карта нерешаема
+            return "e -1"
+            
+        if len(path) == 1:
+            # Мы уже в целевой клетке
+            if not self.found_gollum and (self.current_pos == self.gollum_pos):
+                self.found_gollum = True
+                # Получаем позицию Горы Огненной от интерактора
+                return None  # Нужно обработать специальный случай
+            else:
+                return "e 0"  # Завершаем выполнение
+                
+        # Берем следующий шаг из пути
+        next_x, next_y, next_ring_state = path[1]
+        
+        # Проверяем, нужно ли переключить кольцо
+        if next_ring_state != self.ring_on:
+            if next_ring_state:
+                return "r"  # Надеть кольцо
+            else:
+                return "rr"  # Снять кольцо
+        else:
+            # Двигаемся в следующую клетку
+            return f"m {next_x} {next_y}"
+
+    def update_after_move(self, new_x: int, new_y: int):
+        """Обновляем состояние после движения"""
+        self.current_pos = (new_x, new_y)
+        
+        # Помечаем клетку как посещенную
+        current_map = self.get_current_map()
+        cell = current_map.get(self.current_pos)
+        if cell:
+            if self.ring_on:
+                cell.visited_with_ring = True
+            else:
+                cell.visited_no_ring = True
+                
+    def update_after_ring_toggle(self, new_ring_state: bool):
+        """Обновляем состояние после переключения кольца"""
+        self.ring_on = new_ring_state
+        
+        # Помечаем текущую клетку как посещенную с новым состоянием кольца
+        current_map = self.get_current_map()
+        cell = current_map.get(self.current_pos)
+        if cell:
+            if self.ring_on:
+                cell.visited_with_ring = True
+            else:
+                cell.visited_no_ring = True
+
     
     def explore_optimal_path(self):
         # Основная логика исследования и движения
