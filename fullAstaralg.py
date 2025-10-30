@@ -1,12 +1,168 @@
-from typing import Set, Tuple, List, Dict, Optional
-from items import ItemType
-from enemies import Enemy
-from cell import Cell
-from aStar import AStarNode, heapq
-from helpers import *
 import sys
+from typing import Set, Tuple, List, Dict, Optional
+import heapq
 
 
+from enum import Enum, auto
+
+class ItemType(Enum):
+    F = auto()  # Frodo
+    O = auto()  # OrcPatrol
+    U = auto()  # UrukHai  
+    N = auto()  # Nazgul
+    W = auto()  # MordorWatchtower
+    G = auto()  # Gollum
+    R = auto()  # The One Ring
+    C = auto()  # Mithril Mail-coat
+    M = auto()  # Mount Doom
+    P = auto()  # Perception zone
+
+
+class Cell:
+    def __init__(self, x: int, y: int):
+        self.x = x
+        self.y = y
+        self.cell_type: Optional[ItemType] = None
+        self.is_safe_no_ring: Optional[bool] = None  # None - неизвестно
+        self.is_safe_with_ring: Optional[bool] = None  # None - неизвестно
+        self.visited_no_ring: bool = False
+        self.visited_with_ring: bool = False
+        self.enemy_type: Optional[ItemType] = None
+        
+    def update_from_perception(self, item_type: ItemType, ring_on: bool, has_mithril: bool):
+        """Обновляем информацию о клетке на основе перцепции"""
+        if ring_on:
+            self.visited_with_ring = True
+        else:
+            self.visited_no_ring = True
+            
+        # Обрабатываем разные типы объектов
+        if item_type in [ItemType.O, ItemType.U, ItemType.N, ItemType.W, ItemType.P]:
+            # Враг или зона поражения - клетка опасна
+            if ring_on:
+                self.is_safe_with_ring = False
+            else:
+                self.is_safe_no_ring = False
+                
+            if item_type != ItemType.P:  # Запоминаем тип врага
+                self.enemy_type = item_type
+                self.cell_type = item_type
+                
+        elif item_type in [ItemType.G, ItemType.C, ItemType.M]:
+            # Безопасные объекты
+            if ring_on:
+                self.is_safe_with_ring = True
+            else:
+                self.is_safe_no_ring = True
+            self.cell_type = item_type
+            
+        elif item_type == ItemType.R:
+            # Кольцо - безопасно, но особый случай
+            if ring_on:
+                self.is_safe_with_ring = True
+            else:
+                self.is_safe_no_ring = True
+            self.cell_type = item_type
+
+
+class AStarNode:
+    def __init__(self, x: int, y: int, ring_on: bool, g: int, h: int, 
+                 parent: Optional['AStarNode'] = None):
+        self.x = x
+        self.y = y
+        self.ring_on = ring_on  # состояние кольца в этом узле
+        self.g = g  # стоимость от начала
+        self.h = h  # эвристическая стоимость до цели
+        self.parent = parent
+        
+    @property
+    def f(self) -> int:
+        return self.g + self.h
+        
+    def __lt__(self, other):
+        return self.f < other.f
+        
+    def __eq__(self, other):
+        return (self.x, self.y, self.ring_on) == (other.x, other.y, other.ring_on)
+        
+    def __hash__(self):
+        return hash((self.x, self.y, self.ring_on))
+        
+    def __repr__(self):
+        return f"Node({self.x},{self.y},{'ring' if self.ring_on else 'no_ring'}) f={self.f}"
+
+def heuristic(a: Tuple[int, int], b: Tuple[int, int]) -> int:
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+def manhattan_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> int:
+    return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+
+class Enemy:
+    def __init__(self, enemy_type: ItemType, x: int, y: int):
+        self.enemy_type = enemy_type
+        self.position = (x, y)
+        
+    def calculate_lethal_zone(self, ring_on: bool, has_mithril: bool) -> Set[Tuple[int, int]]:
+        """Вычисляем зону поражения в зависимости от состояния колец и кольчуги"""
+        x, y = self.position
+        lethal_zone = set()
+        
+        if self.enemy_type == ItemType.O:  # Orc Patrol
+            if ring_on or has_mithril:
+                # Только собственная клетка опасна
+                lethal_zone.add((x, y))
+            else:
+                # Von Neumann radius 1
+                for dx, dy in [(0,0), (1,0), (-1,0), (0,1), (0,-1)]:
+                    lethal_zone.add((x + dx, y + dy))
+                    
+        elif self.enemy_type == ItemType.U:  # Uruk-hai
+            if ring_on or has_mithril:
+                # Von Neumann radius 1
+                for dx, dy in [(0,0), (1,0), (-1,0), (0,1), (0,-1)]:
+                    lethal_zone.add((x + dx, y + dy))
+            else:
+                # Von Neumann radius 2
+                for dx in range(-2, 3):
+                    for dy in range(-2, 3):
+                        if abs(dx) + abs(dy) <= 2:  # Von Neumann condition
+                            lethal_zone.add((x + dx, y + dy))
+                            
+        elif self.enemy_type == ItemType.N:  # Nazgul
+            if ring_on:
+                # Moore radius 2 with ears
+                for dx in range(-2, 3):
+                    for dy in range(-2, 3):
+                        if abs(dx) <= 2 and abs(dy) <= 2:  # Moore
+                            lethal_zone.add((x + dx, y + dy))
+            else:
+                # Moore radius 1 with ears
+                for dx in range(-1, 2):
+                    for dy in range(-1, 2):
+                        lethal_zone.add((x + dx, y + dy))
+                        
+        elif self.enemy_type == ItemType.W:  # Watchtower
+            if ring_on:
+                # Moore radius 2 with ears
+                for dx in range(-2, 3):
+                    for dy in range(-2, 3):
+                        if abs(dx) <= 2 and abs(dy) <= 2:
+                            lethal_zone.add((x + dx, y + dy))
+            else:
+                # Moore radius 2
+                for dx in range(-2, 3):
+                    for dy in range(-2, 3):
+                        if abs(dx) <= 2 and abs(dy) <= 2:
+                            lethal_zone.add((x + dx, y + dy))
+        
+        # Фильтруем клетки за пределами карты
+        filtered_zone = set()
+        for cell_x, cell_y in lethal_zone:
+            if 0 <= cell_x <= 12 and 0 <= cell_y <= 12:
+                filtered_zone.add((cell_x, cell_y))
+                
+        return filtered_zone
+    
 class RingDestroyerGame:
     def __init__(self):
         self.grid_size = 13
@@ -380,3 +536,43 @@ class RingDestroyerGame:
         else:
             # Двигаемся в следующую клетку
             return f"m {next_x} {next_y}"
+
+
+
+def main():
+    game = RingDestroyerGame()
+    
+    # Обрабатываем начальный ввод
+    game.process_initial_input()
+    
+    # Основной игровой цикл
+    try:
+        while True:
+            # Проверяем, не достигли ли мы цели
+            if game.should_stop():
+                final_command = game.get_final_command()
+                print(final_command)
+                sys.stdout.flush()
+                break
+                
+            # Получаем следующую команду с помощью A*
+            command = game.execute_astar_move()
+            
+            if not command:
+                # Если путь не найден
+                print("e -1")
+                sys.stdout.flush()
+                break
+                
+            # Отправляем команду и проверяем завершение
+            should_exit = game.send_command(command)
+            if should_exit:
+                break
+                
+    except Exception as e:
+        # В случае ошибки отправляем команду завершения
+        print(f"e -1")
+        sys.stdout.flush()
+        
+if __name__ == "__main__":
+    main()
