@@ -437,7 +437,7 @@ class RingDestroyerGame:
             current_map = self.map_with_ring if ring_on else self.map_no_ring
             cell = current_map.get((nx, ny))
             
-            if cell and self._is_cell_safe(cell, ring_on):
+            if cell and self._is_cell_safe(cell.x, cell.y, ring_on):
                 # Клетка безопасна - можем двигаться
                 g_new = node.g + 1  # Стоимость движения = 1
                 h_new = manhattan_distance((nx, ny), self._get_current_goal())
@@ -454,12 +454,27 @@ class RingDestroyerGame:
             
         return neighbors
         
-    def _is_cell_safe(self, cell: Cell, ring_on: bool) -> bool:
-        """Проверяем, безопасна ли клетка в данном состоянии кольца"""
-        if ring_on:
-            return cell.is_safe_with_ring is True
-        else:
-            return cell.is_safe_no_ring is True
+    def _is_cell_safe(self, x: int, y: int, ring_on: bool) -> bool:
+        """Проверяем безопасность клетки с учетом известных врагов"""
+        # Проверяем явные флаги безопасности
+        current_map = self.map_with_ring if ring_on else self.map_no_ring
+        cell = current_map.get((x, y))
+        
+        if cell:
+            if ring_on and cell.is_safe_with_ring is not None:
+                return cell.is_safe_with_ring
+            elif not ring_on and cell.is_safe_no_ring is not None:
+                return cell.is_safe_no_ring
+        
+        # Если нет явной информации, проверяем против известных врагов
+        for enemy in self.known_enemies:
+            lethal_zone = enemy.calculate_lethal_zone(ring_on, self.has_mithril)
+            if (x, y) in lethal_zone:
+                return False
+        
+        # Если нет информации о врагах и нет явных флагов, считаем безопасной
+        # (можно изменить на False для более консервативного подхода)
+        return True
             
     def _get_current_goal(self) -> Tuple[int, int]:
         """Получаем текущую цель (Голлум или Гора Огненная)"""
@@ -495,23 +510,18 @@ class RingDestroyerGame:
                 cell.visited_no_ring = True
                 
     def execute_astar_move(self) -> Optional[str]:
-        """
-        Выполняет один ход на основе A* поиска
-        Возвращает команду для интерактора или None если путь завершен
-        """
-        # Определяем текущую цель
-        if not self.found_gollum:
-            goal = self.gollum_pos
-        else:
-            goal = self.doom_pos
+        """Выполняет один ход на основе A* поиска"""
+        if self.should_stop():
+            return None
             
+        goal = self._get_current_goal()
         if goal is None:
             return "e -1"
-            
+        
         # Если мы уже в целевой клетке
         if self.current_pos == goal:
             if not self.found_gollum:
-                # Должны найти Голлума в этом ходу
+                # Активируем поиск Голлума
                 return None
             else:
                 # Достигли Горы Огненной
@@ -521,7 +531,7 @@ class RingDestroyerGame:
         path = self.a_star_search(self.current_pos, goal, self.ring_on)
         
         if not path or len(path) < 2:
-            # Путь не найден
+            print(f"DEBUG: No path found from {self.current_pos} to {goal}", file=sys.stderr)
             return "e -1"
             
         # Берем следующий шаг из пути
@@ -529,12 +539,8 @@ class RingDestroyerGame:
         
         # Проверяем, нужно ли переключить кольцо
         if next_ring_state != self.ring_on:
-            if next_ring_state:
-                return "r"  # Надеть кольцо
-            else:
-                return "rr"  # Снять кольцо
+            return "r" if next_ring_state else "rr"
         else:
-            # Двигаемся в следующую клетку
             return f"m {next_x} {next_y}"
 
 
@@ -571,7 +577,7 @@ def main():
                 
     except Exception as e:
         # В случае ошибки отправляем команду завершения
-        print(f"e -1")
+        print(f"{e}: e -1")
         sys.stdout.flush()
         
 if __name__ == "__main__":
