@@ -312,9 +312,9 @@ class RingDestroyerGame:
             return "e -1"
             
     def backtracking_search(self, start: Tuple[int, int], goal: Tuple[int, int], 
-                          start_ring: bool, start_mithril: bool, 
-                          max_depth: int = 10) -> Optional[List[Tuple[int, int, bool]]]:
-        """Backtracking поиск пути с мемоизацией и эвристикой"""
+                      start_ring: bool, start_mithril: bool, 
+                      max_depth: int = 100) -> Optional[List[Tuple[int, int, bool]]]:
+        """Backtracking поиск пути с правильной мемоизацией"""
         start_node = BacktrackNode(
             start[0], start[1], start_ring, start_mithril,
             [(start[0], start[1], start_ring)], 0
@@ -322,7 +322,7 @@ class RingDestroyerGame:
         
         # Мемоизация: visited states для всего поиска
         visited = set()
-        # Стек для DFS (будем использовать как LIFO)
+        # Стек для DFS
         stack = [start_node]
         
         while stack:
@@ -336,8 +336,8 @@ class RingDestroyerGame:
             if node.depth >= max_depth:
                 continue
                 
-            # Проверяем мемоизацию
-            state_key = (node.x, node.y, node.ring_on, node.mithril_on)
+            # Проверяем мемоизацию - используем полное состояние
+            state_key = (node.x, node.y, node.ring_on, node.mithril_on, node.depth)
             if state_key in visited:
                 continue
             visited.add(state_key)
@@ -352,37 +352,64 @@ class RingDestroyerGame:
                 if not (0 <= nx < self.grid_size and 0 <= ny < self.grid_size):
                     continue
                     
-                # Проверяем безопасность в текущем состоянии кольца
-                current_map = self.map_with_ring if node.ring_on else self.map_no_ring
-                cell = current_map.get((nx, ny))
-                
-                if cell and self._is_cell_safe(cell, node.ring_on):
+                # Используем новую проверку безопасности
+                if self._is_cell_safe(nx, ny, node.ring_on, node.mithril_on):
+                    # Проверяем, есть ли в клетке кольчуга
+                    new_mithril = node.mithril_on
+                    cell_info = self.map_no_ring.get((nx, ny)) or self.map_with_ring.get((nx, ny))
+                    if cell_info and cell_info.cell_type == ItemType.C:
+                        new_mithril = True
+                    
                     new_path = node.path + [(nx, ny, node.ring_on)]
-                    new_node = BacktrackNode(nx, ny, node.ring_on, node.mithril_on, new_path, node.depth + 1)
+                    new_node = BacktrackNode(nx, ny, node.ring_on, new_mithril, new_path, node.depth + 1)
                     successors.append(new_node)
             
-            # Переключение кольца (только в полностью безопасных клетках)
-            if self.is_fully_safe_cell(node.x, node.y):
+            # Переключение кольца - упрощаем условие
+            # Можно переключать кольцо если клетка безопасна в обоих состояниях
+            # ИЛИ если мы уверены, что можем безопасно переключиться
+            if self._can_toggle_ring(node.x, node.y, node.ring_on, node.mithril_on):
                 new_ring_state = not node.ring_on
                 new_path = node.path + [(node.x, node.y, new_ring_state)]
                 new_node = BacktrackNode(node.x, node.y, new_ring_state, node.mithril_on, new_path, node.depth + 1)
                 successors.append(new_node)
             
-            # Упорядочиваем преемников по эвристике (манхэттенское расстояние до цели)
-            # Сортируем в обратном порядке для стека (чтобы лучшие шли первыми)
-            successors.sort(key=lambda n: manhattan_distance((n.x, n.y), goal), reverse=True)
-            
-            # Добавляем в стек
-            stack.extend(successors)
+            # Упорядочиваем преемников по эвристике (лучшие сначала)
+            successors.sort(key=lambda n: manhattan_distance((n.x, n.y), goal))
+            # Добавляем в стек в обратном порядке (чтобы лучшие обрабатывались первыми)
+            stack.extend(reversed(successors))
             
         return None
+
         
-    def _is_cell_safe(self, cell: Cell, ring_on: bool) -> bool:
-        if ring_on:
-            return cell.is_safe_with_ring is True
-        else:
-            return cell.is_safe_no_ring is True
-            
+    def _is_cell_safe(self, x: int, y: int, ring_on: bool, mithril_on: bool) -> bool:
+        """Проверяем безопасность клетки с учетом известных врагов и состояния"""
+        # Сначала проверяем явные флаги безопасности из карты
+        current_map = self.map_with_ring if ring_on else self.map_no_ring
+        cell = current_map.get((x, y))
+        
+        if cell:
+            if ring_on and cell.is_safe_with_ring is not None:
+                return cell.is_safe_with_ring
+            elif not ring_on and cell.is_safe_no_ring is not None:
+                return cell.is_safe_no_ring
+        
+        # Если нет явной информации, проверяем против известных врагов
+        for enemy in self.known_enemies:
+            lethal_zone = enemy.calculate_lethal_zone(ring_on, mithril_on)
+            if (x, y) in lethal_zone:
+                return False
+        
+        # Если нет информации о врагах и нет явных флагов, считаем безопасной
+        # Это позволяет исследовать неизвестные территории
+        return True
+    
+    def _can_toggle_ring(self, x: int, y: int, current_ring: bool, mithril: bool) -> bool:
+        """Проверяем, можно ли безопасно переключить кольцо в этой клетке"""
+        new_ring_state = not current_ring
+        
+        # Клетка должна быть безопасна в новом состоянии кольца
+        return self._is_cell_safe(x, y, new_ring_state, mithril)
+
     def _get_current_goal(self) -> Tuple[int, int]:
         if self.found_gollum and self.doom_pos:
             return self.doom_pos
@@ -412,27 +439,44 @@ class RingDestroyerGame:
                 cell.visited_no_ring = True
                 
     def execute_backtracking_move(self) -> Optional[str]:
-        goal = self._get_current_goal()
-        if goal is None:
-            return "e -1"
-            
-        if self.current_pos == goal:
-            if not self.found_gollum:
-                return None
-            else:
-                return None
+        """Исправленная версия выполнения хода"""
+        try:
+            goal = self._get_current_goal()
+            if goal is None:
+                return "e -1"
                 
-        path = self.backtracking_search(self.current_pos, goal, self.ring_on, self.has_mithril)
-        
-        if not path or len(path) < 2:
-            return "e -1"
+            # Если мы уже в целевой клетке
+            if self.current_pos == goal:
+                if not self.found_gollum:
+                    # Нашли Голлума - обработаем в основном цикле
+                    return None
+                else:
+                    # Достигли Горы Огненной
+                    return None
+                    
+            # Ищем путь с учетом текущего состояния
+            path = self.backtracking_search(
+                self.current_pos, goal, 
+                self.ring_on, self.has_mithril,
+                max_depth=10  # Увеличиваем глубину поиска
+            )
             
-        next_x, next_y, next_ring_state = path[1]
-        
-        if next_ring_state != self.ring_on:
-            return "r" if next_ring_state else "rr"
-        else:
-            return f"m {next_x} {next_y}"
+            if not path or len(path) < 2:
+                print(f"DEBUG: No path found from {self.current_pos} to {goal}", file=sys.stderr)
+                return "e -1"
+                
+            # Берем следующий шаг из пути
+            next_x, next_y, next_ring_state = path[1]
+            
+            # Проверяем, нужно ли переключить кольцо
+            if next_ring_state != self.ring_on:
+                return "r" if next_ring_state else "rr"
+            else:
+                return f"m {next_x} {next_y}"
+                
+        except Exception as e:
+            print(f"DEBUG: Error in execute_backtracking_move: {e}", file=sys.stderr)
+            return "e -1"
 
 def main():
     game = RingDestroyerGame()
