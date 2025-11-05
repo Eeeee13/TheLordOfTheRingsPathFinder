@@ -1,5 +1,5 @@
 from typing import Set, Tuple, List, Dict, Optional
-from items import ItemType
+from objects.items import ItemType
 
 class Enemy:
     def __init__(self, enemy_type: ItemType, x: int, y: int):

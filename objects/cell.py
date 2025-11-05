@@ -1,5 +1,5 @@
 from typing import Set, Tuple, List, Dict, Optional
-from items import ItemType
+from objects.items import ItemType
 class Cell:
     def __init__(self, x: int, y: int):
         self.x = x
