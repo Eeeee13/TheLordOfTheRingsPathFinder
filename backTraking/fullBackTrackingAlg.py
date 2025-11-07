@@ -165,6 +165,14 @@ class RingDestroyerGame:
         self.steps_count = 0
         self.L1 = 0  # path length to Gollum
         self.L2 = 0  # path length from Gollum to Mount Doom
+
+        self.action_history: List[Tuple[int, int, bool]] = []  # (x, y, ring_on)
+        self.max_history = 10
+
+        self.position_visit_count: Dict[Tuple[int, int], int] = {}
+        self.stuck_counter = 0  # Count how long we've been stuck
+        self.last_progress_step = 0  # Last step where we made progress
+        self.forbidden_cells: Set[Tuple[int, int]] = set()  # Temporarily forbidden
         
     def initialize_maps(self):
         self.map_no_ring: Dict[Tuple[int, int], Cell] = {}
@@ -272,12 +280,15 @@ class RingDestroyerGame:
         print(command)
         sys.stdout.flush()
         
+        # Track action BEFORE executing
+        self.action_history.append((self.current_pos[0], self.current_pos[1], self.ring_on))
+        if len(self.action_history) > self.max_history:
+            self.action_history.pop(0)
+        
         if command.startswith('e'):
-            return True  # End execution
+            return True
             
-        # Process game response
         if command.startswith('m'):
-            # Update position after move
             parts = command.split()
             new_x, new_y = int(parts[1]), int(parts[2])
             self.update_after_move(new_x, new_y)
@@ -288,10 +299,7 @@ class RingDestroyerGame:
         elif command == 'rr':
             self.update_after_ring_toggle(False)
             
-        # Read updated perception
         self.read_and_update_perception()
-        
-        # Check special events
         self.check_special_events()
         
         return False
@@ -320,7 +328,7 @@ class RingDestroyerGame:
         self.doom_pos = (doom_x, doom_y)
                 
         # Calculate L1 - path length to Gollum
-        path_to_gollum = self.a_star_search((0, 0), self.gollum_pos, False)
+        path_to_gollum = self.backtracking_search((0, 0), self.gollum_pos, False, self.has_mithril)
         if path_to_gollum:
             self.L1 = self.get_movement_count(path_to_gollum)
             
@@ -351,10 +359,9 @@ class RingDestroyerGame:
             return "e -1"
             
     def backtracking_search(self, start: Tuple[int, int], goal: Tuple[int, int], 
-                      start_ring: bool, start_mithril: bool, 
-                      max_depth: int = 100) -> Optional[List[Tuple[int, int, bool]]]:
-        # find path from start to goal using backtracking
-        # returns list of (x, y, ring_state) or None if no path
+                  start_ring: bool, start_mithril: bool, 
+                  max_depth: int = 100) -> Optional[List[Tuple[int, int, bool]]]:
+        """Find path from start to goal using backtracking with cycle prevention"""
         start_node = BacktrackNode(
             start[0], start[1], start_ring, start_mithril,
             [(start[0], start[1], start_ring)], 0
@@ -366,43 +373,58 @@ class RingDestroyerGame:
         while stack:
             node = stack.pop()
             
-            # reached goal? return the path
-            if (node.x, node.y) == goal:
-                return node.path
-            
-            # too deep? skip    
-            if node.depth >= max_depth:
-                continue
-            
-            # already been here with same state? skip
+            # State key for detecting cycles
             state_key = (node.x, node.y, node.ring_on, node.mithril_on)
+            
+            # Already visited this state? Skip
             if state_key in visited:
                 continue
             visited.add(state_key)
             
+            # Reached goal? Return the path
+            if (node.x, node.y) == goal:
+                return node.path
+            
+            # Too deep? Skip    
+            if node.depth >= max_depth:
+                continue
+            
             successors = []
             
-            # get previous position to avoid backtracking
-            prev_pos = None
-            if len(node.path) > 1:
-                prev_x, prev_y, _ = node.path[-2]
-                prev_pos = (prev_x, prev_y)
+            # Get last few positions to detect position cycles
+            recent_positions = []
+            if len(node.path) >= 4:
+                recent_positions = [(x, y) for x, y, _ in node.path[-4:]]
             
-            # try moving to neighbors
+            # Try moving to neighbors
             for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
                 nx, ny = node.x + dx, node.y + dy
                 
-                # out of bounds? skip
+                # Out of bounds? Skip
                 if not (0 <= nx < self.grid_size and 0 <= ny < self.grid_size):
                     continue
                 
-                # going back? skip
-                if prev_pos is not None and (nx, ny) == prev_pos:
+                # Check if this creates a position cycle (A->B->A pattern)
+                if len(node.path) >= 2:
+                    prev_x, prev_y, _ = node.path[-1]
+                    if len(node.path) >= 3:
+                        prev_prev_x, prev_prev_y, _ = node.path[-2]
+                        # Prevent immediate back-and-forth: A->B->A
+                        if (nx, ny) == (prev_prev_x, prev_prev_y):
+                            continue
+                
+                # Check for longer cycles (visiting same position too often)
+                if recent_positions.count((nx, ny)) >= 2:
                     continue
                 
-                # safe to move there?
+                # Check if already visited this state
+                next_state = (nx, ny, node.ring_on, node.mithril_on)
+                if next_state in visited:
+                    continue
+                
+                # Safe to move there?
                 if self._is_cell_safe(nx, ny, node.ring_on, node.mithril_on):
-                    # check if we pick up mithril
+                    # Check if we pick up mithril
                     new_mithril = node.mithril_on
                     cell_info = self.map_no_ring.get((nx, ny)) or self.map_with_ring.get((nx, ny))
                     if cell_info and cell_info.cell_type == ItemType.C:
@@ -412,32 +434,50 @@ class RingDestroyerGame:
                     new_node = BacktrackNode(nx, ny, node.ring_on, new_mithril, new_path, node.depth + 1)
                     successors.append(new_node)
             
-            # try toggling ring - but not if we toggled twice in a row already
-            if self._can_toggle_ring(node.x, node.y, node.ring_on, node.mithril_on):
-                allow_switch = True
-                
-                # check last 2 steps
+            # Try toggling ring - with VERY strict anti-cycle checks
+            can_toggle = self._can_toggle_ring(node.x, node.y, node.ring_on, node.mithril_on)
+            
+            if can_toggle:
+                # Don't toggle if we JUST toggled (last action was a toggle at same position)
+                allow_toggle = True
                 if len(node.path) >= 2:
                     last_x, last_y, last_ring = node.path[-1]
-                    second_last_x, second_last_y, second_last_ring = node.path[-2]
-                    
-                    # both steps were toggles in same cell? don't toggle again
-                    if (last_x, last_y) == (node.x, node.y) and (second_last_x, second_last_y) == (node.x, node.y):
-                        if last_ring != second_last_ring:
-                            allow_switch = False
+                    prev_x, prev_y, prev_ring = node.path[-2]
+                    # If both last positions are the same and ring changed, we just toggled
+                    if (last_x, last_y) == (node.x, node.y) == (prev_x, prev_y) and last_ring != prev_ring:
+                        allow_toggle = False
                 
-                if allow_switch:
+                # Also count total toggles at this position
+                if allow_toggle:
+                    toggles_at_position = 0
+                    for i in range(len(node.path) - 1, max(-1, len(node.path) - 8), -1):
+                        if i > 0:
+                            x, y, ring_state = node.path[i]
+                            prev_x, prev_y, prev_ring = node.path[i-1]
+                            if (x, y) == (node.x, node.y) == (prev_x, prev_y) and ring_state != prev_ring:
+                                toggles_at_position += 1
+                    
+                    # Max 1 toggle at any position
+                    if toggles_at_position >= 1:
+                        allow_toggle = False
+                
+                if allow_toggle:
                     new_ring_state = not node.ring_on
-                    new_path = node.path + [(node.x, node.y, new_ring_state)]
-                    new_node = BacktrackNode(node.x, node.y, new_ring_state, node.mithril_on, new_path, node.depth + 1)
-                    successors.append(new_node)
+                    toggle_state = (node.x, node.y, new_ring_state, node.mithril_on)
+                    
+                    if toggle_state not in visited:
+                        new_path = node.path + [(node.x, node.y, new_ring_state)]
+                        new_node = BacktrackNode(node.x, node.y, new_ring_state, node.mithril_on, 
+                                                new_path, node.depth + 1)
+                        successors.append(new_node)
             
-            # add successors to stack, closest to goal first
-            successors.sort(key=lambda n: manhattan_distance((n.x, n.y), goal))
-            stack.extend(reversed(successors))
-            
-        return None
+            # Add successors to stack, prioritizing those closer to goal
+            if successors:
+                successors.sort(key=lambda n: manhattan_distance((n.x, n.y), goal), reverse=True)
+                stack.extend(successors)
         
+        return None
+
     def _is_cell_safe(self, x: int, y: int, ring_on: bool, mithril_on: bool) -> bool:
         """Проверяем безопасность клетки с учетом известных врагов и состояния"""
         # Сначала проверяем явные флаги безопасности из карты
@@ -494,49 +534,141 @@ class RingDestroyerGame:
                 cell.visited_with_ring = True
             else:
                 cell.visited_no_ring = True
+
+    def _recently_toggled_here(self) -> bool:
+        """Check if we recently toggled ring at current position"""
+        if len(self.action_history) < 2:
+            return False
+        
+        count = 0
+        for i in range(len(self.action_history) - 1, max(-1, len(self.action_history) - 5), -1):
+            x, y, ring = self.action_history[i]
+            if (x, y) == self.current_pos:
+                if i > 0:
+                    prev_x, prev_y, prev_ring = self.action_history[i-1]
+                    if (prev_x, prev_y) == self.current_pos and ring != prev_ring:
+                        count += 1
+        
+        return count >= 1
+    
+
+    def _explore_new_direction(self) -> str:
+        """Try to move to a safe, preferably unvisited cell"""
+        goal = self._get_current_goal()
+        best_move = None
+        best_score = float('inf')
+        
+        # Get recently visited positions to avoid them
+        recent_positions = set()
+        if len(self.action_history) >= 5:
+            recent_positions = {(x, y) for x, y, _ in self.action_history[-5:]}
+        
+        for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+            nx, ny = self.current_pos[0] + dx, self.current_pos[1] + dy
+            
+            if not (0 <= nx < self.grid_size and 0 <= ny < self.grid_size):
+                continue
+            
+            if not self._is_cell_safe(nx, ny, self.ring_on, self.has_mithril):
+                continue
+            
+            # Calculate score (lower is better)
+            current_map = self.get_current_map()
+            cell = current_map.get((nx, ny))
+            
+            is_visited = False
+            if cell:
+                is_visited = cell.visited_with_ring if self.ring_on else cell.visited_no_ring
+            
+            dist_to_goal = manhattan_distance((nx, ny), goal)
+            
+            # Score: prefer unvisited, not recently visited, closer to goal
+            score = dist_to_goal
+            if is_visited:
+                score += 50
+            if (nx, ny) in recent_positions:
+                score += 100
+            
+            if score < best_score:
+                best_score = score
+                best_move = f"m {nx} {ny}"
+        
+        if best_move:
+            return best_move
+        
+        # If all else fails, try toggling ring if safe
+        if self._can_toggle_ring(self.current_pos[0], self.current_pos[1], 
+                                  self.ring_on, self.has_mithril):
+            if not self._recently_toggled_here():
+                return "r" if not self.ring_on else "rr"
+        
+        return "e -1"
+
+    def _is_in_cycle(self) -> bool:
+        """Check if we're repeating the same states"""
+        if len(self.action_history) < 4:
+            return False
+        
+        # Check for A->B->A->B pattern (oscillation)
+        recent = self.action_history[-4:]
+        if (recent[0] == recent[2] and recent[1] == recent[3] and 
+            recent[0] != recent[1]):
+            return True
+        
+        # Check if we're stuck at same position with ring toggles
+        if len(self.action_history) >= 3:
+            last_3 = self.action_history[-3:]
+            positions = [(x, y) for x, y, _ in last_3]
+            if len(set(positions)) == 1:  # Same position
+                ring_states = [r for _, _, r in last_3]
+                if len(set(ring_states)) > 1:  # Ring toggling
+                    return True
+        
+        return False
                 
         
     def execute_move(self) -> Optional[str]:
-        # figure out what to do next and return the command
+        """Figure out what to do next and return the command"""
         try:
             goal = self._get_current_goal()
             if goal is None:
                 return "e -1"
             
-            # already at goal
+            # Already at goal
             if self.current_pos == goal:
                 if not self.found_gollum:
                     return None
                 else:
                     return None
             
-            # find path to goal
+            # Check if we're stuck in a cycle
+            if self._is_in_cycle():
+                # Try to break out of cycle by exploring
+                return self._explore_new_direction()
+            
+            # Find path to goal with current ring state
             path = self.backtracking_search(
                 self.current_pos, goal, 
                 self.ring_on, self.has_mithril,
-                max_depth=10
+                max_depth=50
             )
             
-            # if no path try with ring toggled
+            # If no path found, try with ring toggled
             if not path or len(path) < 2:
-                alt_path = self.backtracking_search(
-                    self.current_pos, goal, 
-                    not self.ring_on, self.has_mithril,
-                    max_depth=35
-                )
-                if alt_path and len(alt_path) >= 2:
-                    return "r" if not self.ring_on else "rr"
+                # But don't toggle if we just toggled recently at this position
+                if not self._recently_toggled_here():
+                    alt_path = self.backtracking_search(
+                        self.current_pos, goal, 
+                        not self.ring_on, self.has_mithril,
+                        max_depth=50
+                    )
+                    if alt_path and len(alt_path) > 2:
+                        return "r" if not self.ring_on else "rr"
                 
-                # if stuck move anywhere safe
-                for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
-                    nx, ny = self.current_pos[0] + dx, self.current_pos[1] + dy
-                    if (0 <= nx < self.grid_size and 0 <= ny < self.grid_size and 
-                        self._is_cell_safe(nx, ny, self.ring_on, self.has_mithril)):
-                        return f"m {nx} {ny}"
-                
-                return "e -1"
+                # Try to explore
+                return self._explore_new_direction()
             
-            # take next step from path
+            # Take next step from path
             next_x, next_y, next_ring_state = path[1]
             
             if next_ring_state != self.ring_on:
