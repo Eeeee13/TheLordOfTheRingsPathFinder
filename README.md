@@ -6,7 +6,7 @@
 
 An interactive simulation and visualization of pathfinding algorithms in a Middle-earth inspired environment. Watch as Frodo navigates through dangerous territories while avoiding Nazgûl and other obstacles using different AI algorithms.
 
-![Game Demo](https://github.com/Eeeee13/TheLordOfTheRingsPathFinder/blob/main/demoVideo.gif)
+<img src="https://github.com/Eeeee13/TheLordOfTheRingsPathFinder/blob/main/demoVideo.gif" width="500">
 
 ## 🧭 Overview
 
