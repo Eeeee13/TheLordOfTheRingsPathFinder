@@ -389,6 +389,16 @@ class Environment:
             [None for _ in range(self.size)] for _ in range(self.size)
         ]
         self.entities = []
+        self.panel_height = 80  # Высота панели управления
+        self.slider_width = 200
+        self.slider_height = 20
+        self.button_width = 120
+        self.button_height = 30
+        self.checkbox_size = 20
+
+        self.simulation_speed = 5  # 1-10
+        self.current_algorithm = "A*"  # "A*" или "BackTracing"
+        self.fog_of_war = True
 
     def add_entity(self, entity: Entity):
         x, y = entity.position
@@ -513,8 +523,126 @@ class Environment:
         print("═" * (self.size * 3 + 2))
 
 
+    def handle_ui_click(self, mouse_pos):
+        """Обработка кликов по элементам UI"""
+        if self.slider_rect and self.slider_rect.collidepoint(mouse_pos):
+            # Обновление слайдера скорости
+            relative_x = mouse_pos[0] - self.slider_rect.left
+            percentage = max(0, min(1, relative_x / self.slider_rect.width))
+            self.simulation_speed = max(1, min(10, round(percentage * 10)))
+        
+        elif self.astar_button_rect and self.astar_button_rect.collidepoint(mouse_pos):
+            self.current_algorithm = "A*"
+            eng.solver_script=astar_script
+            print("Алгоритм изменен на A*")
+        
+        elif self.backtracing_button_rect and self.backtracing_button_rect.collidepoint(mouse_pos):
+            self.current_algorithm = "BackTracing"
+            eng.solver_script=backtracking_script
+            print("Алгоритм изменен на BackTracing")
+        
+        elif self.fog_checkbox_rect and self.fog_checkbox_rect.collidepoint(mouse_pos):
+            self.fog_of_war = not self.fog_of_war
+            print(f"Туман войны: {'ВКЛ' if self.fog_of_war else 'ВЫКЛ'}")
 
-    def draw_pygame(self, surface, cell_size=32, show_hidden=False):
+    def draw_control_panel(self, surface):
+        width, height = surface.get_size()
+        panel_y = height - self.panel_height
+        
+        # Фон панели
+        panel_rect = pygame.Rect(0, panel_y, width, self.panel_height)
+        pygame.draw.rect(surface, (50, 50, 60), panel_rect)
+        pygame.draw.line(surface, (100, 100, 120), (0, panel_y), (width, panel_y), 2)
+        
+        # Вычисляем позиции элементов
+        margin = 20
+        self.slider_rect = pygame.Rect(margin, panel_y + 20, self.slider_width, self.slider_height)
+        
+        button_y = panel_y + 15
+        self.astar_button_rect = pygame.Rect(margin + self.slider_width + 20, button_y, 
+                                            self.button_width, self.button_height)
+        self.backtracing_button_rect = pygame.Rect(margin + self.slider_width + 20 + self.button_width + 10, 
+                                                button_y, self.button_width, self.button_height)
+        
+        checkbox_y = panel_y + 50
+        self.fog_checkbox_rect = pygame.Rect(margin + self.slider_width + 20, checkbox_y, 
+                                            self.checkbox_size, self.checkbox_size)
+        
+        # Шрифты
+        font_small = pygame.font.SysFont("Arial", 14)
+        font_medium = pygame.font.SysFont("Arial", 16, bold=True)
+        
+        # Слайдер скорости
+        pygame.draw.rect(surface, (100, 100, 100), self.slider_rect, border_radius=10)
+        
+        # Заполненная часть слайдера
+        fill_width = (self.simulation_speed / 10.0) * self.slider_width
+        fill_rect = pygame.Rect(self.slider_rect.left, self.slider_rect.top, 
+                            fill_width, self.slider_rect.height)
+        pygame.draw.rect(surface, (0, 150, 200), fill_rect, border_radius=10)
+        
+        # Ползунок
+        thumb_x = self.slider_rect.left + fill_width
+        thumb_rect = pygame.Rect(thumb_x - 5, self.slider_rect.top - 5, 10, 30)
+        pygame.draw.rect(surface, (255, 255, 255), thumb_rect, border_radius=5)
+        
+        # Текст слайдера
+        speed_text = font_small.render(f"Скорость: {self.simulation_speed}", True, (255, 255, 255))
+        surface.blit(speed_text, (self.slider_rect.left, self.slider_rect.top - 20))
+        
+        # Кнопки алгоритмов
+        astar_color = (0, 180, 0) if self.current_algorithm == "A*" else (80, 80, 100)
+        backtracing_color = (0, 180, 0) if self.current_algorithm == "BackTracing" else (80, 80, 100)
+        
+        pygame.draw.rect(surface, astar_color, self.astar_button_rect, border_radius=8)
+        pygame.draw.rect(surface, backtracing_color, self.backtracing_button_rect, border_radius=8)
+        
+        astar_text = font_medium.render("A*", True, (255, 255, 255))
+        backtracing_text = font_medium.render("BackTracing", True, (255, 255, 255))
+        
+        surface.blit(astar_text, (
+            self.astar_button_rect.centerx - astar_text.get_width() // 2,
+            self.astar_button_rect.centery - astar_text.get_height() // 2
+        ))
+        
+        surface.blit(backtracing_text, (
+            self.backtracing_button_rect.centerx - backtracing_text.get_width() // 2,
+            self.backtracing_button_rect.centery - backtracing_text.get_height() // 2
+        ))
+        
+        # Чекбокс тумана войны
+        pygame.draw.rect(surface, (200, 200, 200), self.fog_checkbox_rect, border_radius=4)
+        if self.fog_of_war:
+            check_color = (0, 200, 0)
+            pygame.draw.rect(surface, check_color, 
+                            pygame.Rect(self.fog_checkbox_rect.left + 4, self.fog_checkbox_rect.top + 4,
+                                    self.fog_checkbox_rect.width - 8, self.fog_checkbox_rect.height - 8),
+                            border_radius=2)
+        
+        fog_text = font_medium.render("Туман войны", True, (255, 255, 255))
+        surface.blit(fog_text, (self.fog_checkbox_rect.right + 10, 
+                            self.fog_checkbox_rect.centery - fog_text.get_height() // 2))
+        
+        # Подписи
+        algorithm_text = font_small.render("Алгоритм:", True, (200, 200, 200))
+        surface.blit(algorithm_text, (self.astar_button_rect.left, self.astar_button_rect.top - 20))
+
+    def draw_pygame(self, surface, show_hidden=False):
+            # Получаем текущий размер поверхности (уже с учетом панели управления)
+        surface_width, surface_height = surface.get_size()
+        
+        # Вычисляем адаптивный размер клетки
+        padding = 20
+        available_width = surface_width - 2 * padding
+        available_height = surface_height - 2 * padding
+        
+        cell_size = min(available_width // self.size, available_height // self.size)
+        cell_size = max(10, cell_size)
+        
+        # Центрируем карту
+        offset_x = (surface_width - self.size * cell_size) // 2
+        offset_y = (surface_height - self.size * cell_size) // 2
+        
         enemy_perception_zones = set()
         agent_perception_zones = set()
 
@@ -531,63 +659,124 @@ class Environment:
 
         intersection_zones = agent_perception_zones & enemy_perception_zones
 
-        # --- Цвета ---
-        COLOR_BG         = (220, 220, 220)
-        COLOR_AGENT      = (50, 200, 50)
-        COLOR_ENEMY      = (200, 50, 50)
-        COLOR_COAT       = (255, 140, 0)
-        COLOR_GOLLUM     = (50, 100, 255)
-        COLOR_MOUNTAIN   = (180, 0, 180)
-        COLOR_INTERSECT  = (255, 255, 0)
-        COLOR_A_PERC     = (120, 255, 120)
-        COLOR_E_PERC     = (255, 120, 120)
+        # --- Улучшенная цветовая палитра ---
+        COLOR_BG = (245, 245, 245)
+        COLOR_GRID = (220, 220, 220)
+        COLOR_AGENT = (76, 175, 80)
+        COLOR_ENEMY = (244, 67, 54)
+        COLOR_COAT = (255, 152, 0)
+        COLOR_GOLLUM = (63, 81, 181)
+        COLOR_MOUNTAIN = (156, 39, 176)
+        COLOR_INTERSECT = (255, 235, 59)
+        COLOR_A_PERC = (129, 199, 132)
+        COLOR_E_PERC = (229, 115, 115)
+        
+        # Градиенты для объектов
+        GRADIENT_AGENT = [(76, 175, 80), (56, 142, 60)]
+        GRADIENT_ENEMY = [(244, 67, 54), (198, 40, 40)]
+        GRADIENT_COAT = [(255, 152, 0), (245, 124, 0)]
+        GRADIENT_GOLLUM = [(63, 81, 181), (48, 63, 159)]
+        GRADIENT_MOUNTAIN = [(156, 39, 176), (123, 31, 162)]
 
-        # --- Рисование ---
+        # --- Фон ---
+        surface.fill(COLOR_BG)
+        
+        # --- Рисование клеток с эффектами ---
         for i in range(self.size):
             for j in range(self.size):
-
-                rect = pygame.Rect(j * cell_size, i * cell_size, cell_size, cell_size)
+                # Используем смещение для центрирования
+                rect = pygame.Rect(
+                    offset_x + j * cell_size, 
+                    offset_y + i * cell_size, 
+                    cell_size, 
+                    cell_size
+                )
                 entity = self.map[i][j]
 
-                # Определяем цвет клетки
+                # Определяем цвет клетки и эффекты
+                shadow_rect = None
+                gradient_colors = None
+                
                 if entity:
                     if isinstance(entity, Agent):
-                        color = COLOR_AGENT
+                        base_color = COLOR_AGENT
+                        gradient_colors = GRADIENT_AGENT
                     elif isinstance(entity, Enemy):
-                        color = COLOR_ENEMY
+                        base_color = COLOR_ENEMY
+                        gradient_colors = GRADIENT_ENEMY
                     elif isinstance(entity, Coat):
-                        color = COLOR_COAT
+                        base_color = COLOR_COAT
+                        gradient_colors = GRADIENT_COAT
                     elif isinstance(entity, Gollum):
-                        color = COLOR_GOLLUM
+                        base_color = COLOR_GOLLUM
+                        gradient_colors = GRADIENT_GOLLUM
                     elif isinstance(entity, MountainDoom):
-                        color = COLOR_MOUNTAIN if show_hidden else COLOR_BG
+                        base_color = COLOR_MOUNTAIN if show_hidden else COLOR_BG
+                        if show_hidden:
+                            gradient_colors = GRADIENT_MOUNTAIN
                     else:
-                        color = COLOR_BG
+                        base_color = COLOR_BG
                 else:
                     if (i, j) in intersection_zones:
-                        color = COLOR_INTERSECT
+                        base_color = COLOR_INTERSECT
                     elif (i, j) in enemy_perception_zones:
-                        color = COLOR_E_PERC
+                        base_color = COLOR_E_PERC
                     elif (i, j) in agent_perception_zones:
-                        color = COLOR_A_PERC
+                        base_color = COLOR_A_PERC
                     else:
-                        color = COLOR_BG
+                        base_color = COLOR_BG
 
-                pygame.draw.rect(surface, color, rect)
+                # Рисуем градиент для объектов
+                if gradient_colors and entity:
+                    pygame.draw.rect(surface, gradient_colors[0], rect)
+                    gradient_rect = pygame.Rect(rect.left, rect.top, rect.width, rect.height // 2)
+                    pygame.draw.rect(surface, gradient_colors[1], gradient_rect)
+                    
+                else:
+                    pygame.draw.rect(surface, base_color, rect, border_radius=2)
 
-                # Рисуем символ сущности (token)
+                # Рисуем символ сущности
                 if entity:
                     if not pygame.font.get_init():
                         pygame.font.init()
 
-                    font = pygame.font.SysFont("Arial", int(cell_size * 0.6))
-                    text = font.render(entity.token, True, (0, 0, 0))
+                    # Размер шрифта адаптируется к размеру клетки
+                    font_size = max(12, int(cell_size * 0.6))  # Минимальный размер шрифта
+                    try:
+                        font = pygame.font.Font(None, font_size)
+                    except:
+                        font = pygame.font.SysFont("Arial", font_size, bold=True)
+
+                    text_color = (255, 255, 255)
+                    shadow_color = (0, 0, 0, 128)
+                    
+                    # Тень текста
+                    text = font.render(entity.token, True, shadow_color)
+                    shadow_rect_pos = text.get_rect(center=(rect.centerx + 1, rect.centery + 1))
+                    surface.blit(text, shadow_rect_pos)
+                    
+                    # Основной текст
+                    text = font.render(entity.token, True, text_color)
                     text_rect = text.get_rect(center=rect.center)
                     surface.blit(text, text_rect)
 
                 # Сетка
-                pygame.draw.rect(surface, (0, 0, 0), rect, 1)
+                pygame.draw.rect(surface, COLOR_GRID, rect, 1, border_radius=2)
 
+        # Граница вокруг всей карты
+        map_rect = pygame.Rect(
+            offset_x, 
+            offset_y, 
+            self.size * cell_size, 
+            self.size * cell_size
+        )
+        pygame.draw.rect(surface, (100, 100, 100), map_rect, 3, border_radius=5)
+        
+        # Информационная панель
+        info_font = pygame.font.SysFont("Arial", max(12, int(cell_size * 0.3)))
+        info_text = f"Размер: {self.size}x{self.size} | Объектов: {len(self.entities)} | Размер окна: {surface_width}x{surface_height}"
+        text_surface = info_font.render(info_text, True, (80, 80, 80))
+        surface.blit(text_surface, (10, surface_height - 25))
 
 class GameStatistics:
     def __init__(self):
@@ -777,13 +966,25 @@ class Engine:
             if not silent_mode:
                 print(f"Logging enabled: {log_file}")
 
+        
+        self.game_over = False
+        self.victory = False
+        
+        
+        # Позиции элементов (будут вычисляться динамически)
+        self.slider_rect = None
+        self.astar_button_rect = None
+        self.backtracing_button_rect = None
+
+        self.fog_checkbox_rect = None
+
         CELL = 40                # размер клетки (px)
         MARGIN = 2               # рамка между клетками
         COLS = ROWS = 13         # размер карты
         WIDTH  = ROWS * (CELL + MARGIN) + MARGIN
         HEIGHT = COLS * (CELL + MARGIN) + MARGIN + 120  + 60  # место под консоль + кнопки
 
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
 
         self.use_solver = use_solver
         self.use_process_solver = use_process_solver
@@ -796,6 +997,48 @@ class Engine:
             if use_process_solver:
                 # Use process-based interactor
                 self.process_interactor = ProcessInteractor(self, self.solver_script)
+
+    def check_game_state(self):
+        """Проверяет состояние игры и устанавливает флаги game_over/victory"""
+        # Здесь добавьте логику проверки завершения игры
+        # Например:
+        if self.agent.has_reached_goal:
+            self.victory = True
+            # self.game_over = True
+            print("Победа! Агент достиг цели!")
+        elif not self.agent.is_alive:
+            self.victory = False
+            # self.game_over = True
+            print("Поражение! Агент погиб!")
+    
+    def reset_game(self):
+        """Сбрасывает состояние игры для новой симуляции"""
+        self.game_over = False
+        self.victory = False
+
+    def draw_game_over_screen(self):
+        """Отрисовывает экран завершения игры"""
+        self.screen.fill((0, 0, 0))
+        
+        # Большой текст результата
+        font_large = pygame.font.SysFont("Arial", 72, bold=True)
+        if self.victory:
+            text = font_large.render("ПОБЕДА!", True, (0, 255, 0))
+        else:
+            text = font_large.render("ПОРАЖЕНИЕ", True, (255, 0, 0))
+        
+        text_rect = text.get_rect(center=(self.screen.get_width()//2, self.screen.get_height()//2 - 50))
+        self.screen.blit(text, text_rect)
+        
+        # Инструкция
+        font_small = pygame.font.SysFont("Arial", 24)
+        instruction = font_small.render("Нажмите Ctrl+R для новой игры или ESC для выхода", 
+                                      True, (255, 255, 255))
+        instruction_rect = instruction.get_rect(center=(self.screen.get_width()//2, 
+                                                      self.screen.get_height()//2 + 50))
+        self.screen.blit(instruction, instruction_rect)
+        
+        pygame.display.update()
 
     def update_known_dangers(self):
         """Updates the set of known dangers based on current agent position"""
@@ -816,18 +1059,12 @@ class Engine:
 
     def update(self):
         self.env.update_map()
-        # self.env.map = [[None for _ in range(self.env.size)] for _ in range(self.env.size)]
-        # for e in self.env.entities:
-        #     x, y = e.position
-        #     self.env.map[x][y] = e
-
         self.update_known_dangers()
         self.update_explored_cells()
         self.visited_positions.add(tuple(self.agent.position))
 
         if not self.silent_mode:
-            # Обработка событий (ВАЖНО!)
-            pygame.time.delay(100)
+            # Обработка событий
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
@@ -836,11 +1073,32 @@ class Engine:
                     if event.key == pygame.K_ESCAPE:
                         pygame.quit()
                         return
-
-            # Отрисовка
-            self.screen.fill((0, 0, 0))  # Очистка экрана
-            self.env.draw_pygame(self.screen, show_hidden=self.gollum_found)
+                elif event.type == pygame.VIDEORESIZE:
+                    self.screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    self.env.handle_ui_click(event.pos)
+                elif event.type == pygame.MOUSEMOTION:
+                    if event.buttons[0]:  # Левая кнопка мыши зажата
+                        self.env.handle_ui_click(event.pos)
+            
+            # Очистка экрана
+            self.screen.fill((245, 245, 245))
+            
+            # Отрисовка карты (с учетом панели управления)
+            map_surface = self.screen.subsurface(pygame.Rect(0, 0, 
+                                                            self.screen.get_width(), 
+                                                            self.screen.get_height() - self.env.panel_height))
+            self.env.draw_pygame(map_surface, show_hidden=self.gollum_found)
+            
+            # Отрисовка панели управления
+            self.env.draw_control_panel(self.screen)
+            
+            # Обновление дисплея
             pygame.display.update()
+            
+            # Задержка в зависимости от скорости симуляции
+            delay = 500 // self.env.simulation_speed  # От 50ms до 500ms
+            pygame.time.delay(delay)
 
             self._print_surrounding_info()
 
@@ -873,10 +1131,10 @@ class Engine:
         return False
 
     def _finish_game(self, victory):
-        self.game_over = True
-        if self.process_interactor:
-            self.process_interactor.close()
-        self.stats.finish(victory=victory)
+        # self.game_over = True
+        # if self.process_interactor:
+        #     self.process_interactor.close()
+        # self.stats.finish(victory=victory)
 
         if self.enable_logging:
             if victory:
@@ -979,10 +1237,11 @@ class Engine:
             if command.startswith('e'):
                 if command == 'e -1':
                     if self.enable_logging:
-                        self.logger.log("❌ Solver cannot find solution", include_timestamp=True)
+                        # self.logger.log("❌ Solver cannot find solution", include_timestamp=True)
                         self.logger.log_map(self.env, show_hidden=self.gollum_found)
                     print("❌ Solver cannot find solution")
                     self._finish_game(False)
+                    return
                 else:
                     try:
                         steps = int(command.split()[1])
@@ -995,7 +1254,7 @@ class Engine:
                     self.logger.log(f"e {command.split()[1]}")
                 if not self.silent_mode:
                     print(f"e {command.split()[1]}")
-                break
+                    return
 
             elif command.startswith('m'):
                 self.stats.add_move(command)
@@ -1061,8 +1320,16 @@ class Engine:
 
     def process_command(self, command_str):
         command = CommandFactory.create_command(command_str)
-        if command:
+        if self.game_over and cmd.strip().lower() not in ['restart', 'exit']:
+            print("Игра завершена. Используйте 'restart' для новой игры или 'exit' для выхода")
+            return
+        elif command:
             command.execute(self)
+
+        elif cmd.startswith("restart"):
+            self.reset_game()
+            # Note: в main цикле будет создана полностью новая игра
+            print("Готово к созданию новой игры...")
         else:
             print("❌ Unknown command. Available: m x y, ring, unring, path, auto, test N, compare N, exit")
 
@@ -1510,7 +1777,6 @@ class ComparativeTestRunner:
         print(
             f"{'Mean Time (s)':<25} {stats_v1['mean_time']:<15.3f} {stats_v2['mean_time']:<15.3f} {stats_v1['mean_time'] - stats_v2['mean_time']:<15.3f}")
 
-
 if __name__ == '__main__':
     print("Generating map with random entities...")
 
@@ -1521,14 +1787,30 @@ if __name__ == '__main__':
     default_solver = astar_script
 
     generator = DynamicMapGenerator()
-    environment = generator.generate_map(perception_variant)
+    
+    # Инициализация Pygame
+    pygame.init()
+    screen = pygame.display.set_mode((800, 600), pygame.RESIZABLE)
+    pygame.display.set_caption("The Lord of the Rings - Interactive Simulator")
 
-    eng = Engine(environment, use_solver=True,
+    # Основной игровой цикл
+    running = True
+    current_engine = None
+    
+    def create_new_game():
+        """Создает новую игру с новой картой"""
+        environment = generator.generate_map(perception_variant)
+        eng = Engine(environment, use_solver=True,
                     perception_variant=perception_variant,
                     enable_detailed_logging=False,
                     enable_failure_logging=False,
                     solver_script=default_solver)
-    eng.update()
+        eng.screen = screen  # Используем существующее окно
+        return eng
+
+    # Создаем первую игру
+    current_engine = create_new_game()
+    current_engine.update()
 
     print("\nAvailable commands:")
     print("auto or <enter> — A* solver auto-solve")
@@ -1538,15 +1820,84 @@ if __name__ == '__main__':
     print("ring — put on the Ring")
     print("unring — take off the Ring")
     print("path — calculate path to current goal")
+    print("restart — generate new map")
     print("exit — exit game")
 
+    clock = pygame.time.Clock()
+    
     while True:
         try:
-            cmd = input("\n>>> ").strip()
-            eng.process_command(cmd)
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                    
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    elif event.key == pygame.K_RETURN:
+                        # Авто-режим
+                        cmd = "auto"
+                        current_engine.process_command(cmd)
+                        # После завершения авто-режима обновляем отображение
+                        current_engine.update()
+                    elif event.key == pygame.K_r:
+                        # Перезапуск игры
+                        if pygame.key.get_mods() & pygame.KMOD_CTRL:
+                            # Ctrl+R - перезапуск
+                            current_engine = create_new_game()
+                            current_engine.update()
+                            print("Новая карта создана!")
+                    elif event.key == pygame.K_a:
+                        # Переключение алгоритма A*
+                        current_engine.current_algorithm = "A*"
+                        print("Алгоритм изменен на A*")
+                    elif event.key == pygame.K_b:
+                        # Переключение алгоритма BackTracing
+                        current_engine.current_algorithm = "BackTracing"
+                        print("Алгоритм изменен на BackTracing")
+                    elif event.key == pygame.K_f:
+                        # Переключение тумана войны
+                        current_engine.fog_of_war = not current_engine.fog_of_war
+                        print(f"Туман войны: {'ВКЛ' if current_engine.fog_of_war else 'ВЫКЛ'}")
+                        
+                elif event.type == pygame.VIDEORESIZE:
+                    # При изменении размера окна
+                    screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+                    current_engine.screen = screen
+                    current_engine.update()
+                    
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    # Обработка кликов по UI
+                    if hasattr(current_engine, 'handle_ui_click'):
+                        current_engine.env.handle_ui_click(event.pos)
+                    # После обработки клика обновляем отображение
+                    current_engine.update()
+                    
+                elif event.type == pygame.MOUSEMOTION:
+                    if event.buttons[0]:  # Левая кнопка мыши зажата
+                        if hasattr(current_engine, 'handle_ui_click'):
+                            current_engine.env.handle_ui_click(event.pos)
+                        current_engine.update()
+
+            # Постоянная отрисовка (на случай, если были изменения не через события)
+            # current_engine.update()
+            
+            # Ограничение FPS
+            clock.tick(60)
+            
+            # Проверяем, завершена ли текущая игра
+            if hasattr(current_engine, 'game_over') and current_engine.game_over:
+                print("Игра завершена! Нажмите Ctrl+R для новой игры или ESC для выхода")
+                # Можно добавить отображение сообщения о завершении игры
+                
         except KeyboardInterrupt:
             print("\nGoodbye!")
-            eng.stats.finish(victory=False)
+            if current_engine and hasattr(current_engine, 'stats'):
+                current_engine.stats.finish(victory=False)
             break
         except Exception as err:
             print(f"Error: {err}")
+            import traceback
+            traceback.print_exc()
+
+    pygame.quit()

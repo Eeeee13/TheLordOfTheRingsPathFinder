@@ -1,5 +1,7 @@
 {
     "python.analysis.extraPaths": [
-        "./A*"
+        "./A*",
+        "./backTraking",
+        "./Astar"
     ]
 }
