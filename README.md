@@ -96,24 +96,6 @@ compare 5
 exit
 ```
 
-## 🏗️ Project Structure
-
-```
-TheLordOfTheRings/
-├── interactor3000.py          # Main simulation engine
-├── Astar/
-│   └── fullAstaralg.py        # A* algorithm implementation
-├── backTraking/
-│   └── fullBackTrackingAlg.py # Backtracking algorithm
-├── entities/                  # Game entity classes
-│   ├── agent.py              # Player character (Frodo)
-│   ├── enemy.py              # Enemy classes (Nazgûl)
-│   └── objects.py            # Game objects (Ring, Mount Doom)
-└── utils/
-    ├── map_generator.py      # Dynamic map generation
-    └── statistics.py         # Performance tracking
-```
-
 ## 🔧 Technical Details
 
 ### Algorithms
